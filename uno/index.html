@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#101321" />
+  <title>UNO Online · 好友联机桌</title>
+  <meta name="description" content="无需注册，创建房间码即可和朋友在线玩 UNO。" />
+  <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+  <style>
+    :root{
+      color-scheme:dark;
+      --bg:#090b12;--panel:#121724;--panel2:#171d2d;--line:#2b3348;
+      --text:#f8fafc;--muted:#94a3b8;--accent:#7c3aed;--accent2:#a855f7;
+      --red:#ef4444;--yellow:#facc15;--green:#22c55e;--blue:#3b82f6;
+      --shadow:0 20px 60px rgba(0,0,0,.36)
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+    body{min-height:100dvh;overflow-x:hidden;background:
+      radial-gradient(900px 600px at 10% -10%,rgba(124,58,237,.24),transparent 65%),
+      radial-gradient(800px 500px at 100% 10%,rgba(59,130,246,.15),transparent 60%),#090b12}
+    button,input{font:inherit}
+    button{border:0;cursor:pointer}
+    button:disabled{cursor:not-allowed;opacity:.48}
+    .app{min-height:100dvh;display:flex;flex-direction:column}
+    .topbar{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid rgba(255,255,255,.07);background:rgba(9,11,18,.72);backdrop-filter:blur(18px);position:sticky;top:0;z-index:30}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.2px}
+    .brand-mark{width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,#ef4444,#f59e0b 38%,#22c55e 68%,#3b82f6);display:grid;place-items:center;box-shadow:0 8px 22px rgba(124,58,237,.28);font-size:17px}
+    .status-pill{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;background:rgba(255,255,255,.05);padding:8px 11px;border-radius:999px;border:1px solid rgba(255,255,255,.07)}
+    .dot{width:8px;height:8px;border-radius:50%;background:#64748b}.dot.ok{background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)}.dot.warn{background:#f59e0b}.dot.bad{background:#ef4444}
+    main{flex:1}
+    .screen{display:none}.screen.active{display:block}
+    .home-wrap{max-width:1040px;margin:0 auto;padding:56px 20px 72px;display:grid;grid-template-columns:1.06fr .94fr;gap:34px;align-items:center}
+    .hero h1{font-size:clamp(42px,7vw,78px);line-height:.98;margin:0 0 20px;letter-spacing:-3px}
+    .hero h1 span{background:linear-gradient(100deg,#fff 25%,#c4b5fd 55%,#60a5fa);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .hero p{font-size:18px;line-height:1.75;color:#b8c1d4;margin:0 0 28px;max-width:620px}
+    .feature-row{display:flex;gap:10px;flex-wrap:wrap}.chip{padding:8px 11px;border-radius:999px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);color:#cbd5e1;font-size:13px}
+    .join-card{background:linear-gradient(180deg,rgba(24,30,47,.96),rgba(15,19,31,.96));border:1px solid rgba(255,255,255,.09);box-shadow:var(--shadow);border-radius:28px;padding:26px}
+    .join-card h2{margin:0 0 8px;font-size:24px}.join-card .sub{color:var(--muted);font-size:14px;margin-bottom:22px;line-height:1.6}
+    .field{margin-bottom:14px}.field label{display:block;color:#cbd5e1;font-size:13px;margin-bottom:7px;font-weight:650}.field input{width:100%;border:1px solid var(--line);outline:none;background:#0d1220;color:#fff;padding:13px 14px;border-radius:13px;transition:.2s}.field input:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.13)}
+    .room-input{text-transform:uppercase;letter-spacing:4px;font-weight:800;text-align:center}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:13px;font-weight:750;transition:.17s transform,.17s filter,.17s background;color:white;background:#242b3e;border:1px solid rgba(255,255,255,.07)}.btn:hover:not(:disabled){transform:translateY(-1px);filter:brightness(1.07)}.btn:active:not(:disabled){transform:translateY(0)}
+    .btn.primary{background:linear-gradient(135deg,#7c3aed,#9333ea);box-shadow:0 9px 28px rgba(124,58,237,.26)}.btn.secondary{background:#1a2132}.btn.ghost{background:transparent}.btn.danger{background:#7f1d1d}.btn.full{width:100%}.btn.large{padding:14px 18px;font-size:15px}.divider{display:flex;align-items:center;gap:12px;color:#657087;font-size:12px;margin:15px 0}.divider:before,.divider:after{content:"";height:1px;flex:1;background:#283047}
+    .lobby-wrap{max-width:900px;margin:0 auto;padding:42px 20px 80px}.lobby-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:24px}.eyebrow{font-size:12px;letter-spacing:2px;color:#a78bfa;text-transform:uppercase;font-weight:800}.lobby-head h1{font-size:34px;margin:5px 0 0}.room-code{font-size:32px;font-weight:900;letter-spacing:7px;color:#fff}
+    .lobby-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.panel{background:rgba(18,23,36,.88);border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:20px;box-shadow:0 18px 46px rgba(0,0,0,.18)}.panel h3{margin:0 0 15px;font-size:16px;color:#e2e8f0}
+    .player-list{display:grid;gap:10px}.player-row{display:flex;align-items:center;gap:12px;padding:13px;border-radius:15px;background:#0e1421;border:1px solid #242c40}.avatar{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,#6d28d9,#2563eb);font-weight:850}.player-info{min-width:0;flex:1}.player-name{font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.player-meta{font-size:12px;color:var(--muted);margin-top:3px}.seat{font-size:11px;color:#a5b4fc;background:#202742;padding:5px 7px;border-radius:999px}
+    .invite-box{background:#0b1020;border:1px dashed #39435d;border-radius:16px;padding:16px;margin-bottom:14px}.invite-box .label{font-size:12px;color:var(--muted);margin-bottom:8px}.invite-link{font-size:13px;color:#d8def0;word-break:break-all;line-height:1.5}
+    .help{font-size:13px;line-height:1.7;color:#91a0b8;margin:12px 0 0}.host-note{padding:11px 12px;border-radius:13px;background:rgba(124,58,237,.12);border:1px solid rgba(139,92,246,.22);color:#c4b5fd;font-size:13px;line-height:1.55}
+    .game-wrap{min-height:calc(100dvh - 64px);display:flex;flex-direction:column;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 37%,rgba(26,91,71,.52),rgba(8,27,25,.86) 47%,rgba(5,12,17,.98) 80%)}
+    .game-wrap:before{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,black,transparent 75%)}
+    .game-top{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;gap:12px}.game-room{display:flex;align-items:center;gap:10px;background:rgba(7,12,18,.46);border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(12px);padding:8px 11px;border-radius:12px;font-size:13px}.game-room b{letter-spacing:2px}.game-actions{display:flex;gap:7px}
+    .opponents{position:relative;z-index:2;display:flex;justify-content:center;align-items:flex-start;gap:12px;min-height:92px;padding:0 16px}.opp{min-width:118px;max-width:180px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);background:rgba(8,14,22,.66);backdrop-filter:blur(12px);border-radius:15px;text-align:center;transition:.2s}.opp.current{border-color:#facc15;box-shadow:0 0 0 3px rgba(250,204,21,.1)}.opp.offline{opacity:.48}.opp-name{font-weight:750;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.opp-count{font-size:12px;color:#a8b4c6;margin-top:5px}.mini-cards{height:20px;display:flex;justify-content:center;margin-top:7px}.mini-card{width:12px;height:18px;border-radius:3px;background:linear-gradient(135deg,#4338ca,#7c3aed);border:1px solid rgba(255,255,255,.35);margin-left:-5px;transform:rotate(var(--r,0deg))}
+    .table-zone{position:relative;z-index:2;flex:1;min-height:300px;display:flex;align-items:center;justify-content:center;padding:16px}.table-center{display:grid;grid-template-columns:100px 115px 100px;gap:18px;align-items:center;justify-items:center}.pile-label{font-size:11px;color:#a7b6c8;margin-top:8px;text-align:center}.draw-pile{width:82px;height:118px;border-radius:14px;background:linear-gradient(145deg,#161b2c,#0d1220);border:4px solid #f8fafc;box-shadow:-5px 5px 0 #20263a,-10px 10px 0 #141a2a,0 20px 35px rgba(0,0,0,.28);display:grid;place-items:center;position:relative}.draw-pile:after{content:"";width:52px;height:76px;border-radius:50%;background:linear-gradient(135deg,#ef4444 0 25%,#facc15 25% 50%,#22c55e 50% 75%,#3b82f6 75%);transform:rotate(-18deg);border:4px solid white}.deck-count{position:absolute;bottom:6px;right:7px;background:#000c;color:white;font-size:10px;padding:2px 5px;border-radius:999px}
+    .turn-info{text-align:center;min-width:115px}.turn-name{font-weight:850;font-size:15px}.turn-sub{font-size:12px;color:#b2c0d2;margin-top:5px;line-height:1.45}.direction{font-size:22px;margin-top:8px;opacity:.85}
+    .hand-zone{position:relative;z-index:4;padding:0 12px max(14px,env(safe-area-inset-bottom));}.me-bar{max-width:1100px;margin:0 auto 8px;display:flex;align-items:center;justify-content:space-between;gap:12px}.me-left{display:flex;align-items:center;gap:9px;font-size:13px}.turn-badge{font-size:11px;font-weight:800;padding:5px 8px;border-radius:999px;background:#334155;color:#dbeafe}.turn-badge.active{background:#facc15;color:#2b2100;box-shadow:0 0 0 4px rgba(250,204,21,.12)}.hand-actions{display:flex;gap:7px}
+    .hand-scroll{max-width:1200px;margin:0 auto;overflow-x:auto;overflow-y:hidden;padding:14px 12px 8px;scrollbar-width:none}.hand-scroll::-webkit-scrollbar{display:none}.hand{display:flex;justify-content:center;min-width:max-content;padding:0 12px 12px}
+    .card{--c:#334155;width:76px;height:112px;border-radius:13px;background:var(--c);border:4px solid white;color:white;position:relative;margin-left:-18px;box-shadow:0 8px 18px rgba(0,0,0,.28);transition:.16s transform,.16s filter,.16s opacity;display:flex;align-items:center;justify-content:center;padding:0;overflow:hidden}.card:first-child{margin-left:0}.card:hover:not(:disabled){transform:translateY(-18px) rotate(-1deg);z-index:20;filter:brightness(1.06)}.card.playable{box-shadow:0 0 0 3px rgba(250,204,21,.25),0 10px 22px rgba(0,0,0,.34)}.card.not-playable{filter:saturate(.45) brightness(.75)}.card.red{--c:var(--red)}.card.yellow{--c:var(--yellow);color:#111827}.card.green{--c:var(--green)}.card.blue{--c:var(--blue)}.card.wild{background:conic-gradient(from 45deg,#ef4444 0 25%,#3b82f6 25% 50%,#22c55e 50% 75%,#facc15 75%);color:white}.card:before{content:"";position:absolute;width:53px;height:82px;background:rgba(255,255,255,.92);border-radius:50%;transform:rotate(20deg)}.card.wild:before{background:rgba(10,10,15,.88)}.card-face{position:relative;z-index:2;font-size:30px;font-weight:900;text-shadow:0 2px 2px rgba(0,0,0,.22)}.card.yellow .card-face{text-shadow:none}.card-corner{position:absolute;z-index:3;font-weight:900;font-size:13px;left:6px;top:5px}.card-corner.bottom{left:auto;top:auto;right:6px;bottom:5px;transform:rotate(180deg)}.drawn-flag{position:absolute;z-index:4;top:4px;right:4px;width:9px;height:9px;border-radius:50%;background:#facc15;box-shadow:0 0 0 3px rgba(250,204,21,.22)}
+    .logbar{position:absolute;z-index:3;left:50%;top:104px;transform:translateX(-50%);max-width:min(620px,90vw);font-size:12px;color:#d1d9e6;background:rgba(4,9,15,.58);border:1px solid rgba(255,255,255,.07);backdrop-filter:blur(8px);padding:7px 11px;border-radius:999px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .paused-overlay{position:absolute;z-index:20;inset:0;background:rgba(4,7,12,.68);backdrop-filter:blur(6px);display:grid;place-items:center;padding:20px}.paused-box{width:min(440px,92vw);text-align:center;background:#121827;border:1px solid #323b52;border-radius:22px;padding:26px;box-shadow:var(--shadow)}.paused-box h2{margin:0 0 10px}.paused-box p{margin:0;color:#aab6c8;line-height:1.7;font-size:14px}
+    .modal{position:fixed;z-index:80;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;padding:20px}.modal.show{display:flex}.modal-box{width:min(460px,94vw);background:#141a29;border:1px solid #333c52;border-radius:22px;padding:22px;box-shadow:var(--shadow)}.modal-box h2{margin:0 0 7px}.modal-box p{color:#9aa8ba;font-size:13px;line-height:1.6;margin:0 0 17px}.colors{display:grid;grid-template-columns:1fr 1fr;gap:10px}.color-btn{height:82px;border-radius:15px;color:white;font-size:16px;font-weight:850;border:3px solid rgba(255,255,255,.8)}.color-btn.red{background:var(--red)}.color-btn.yellow{background:var(--yellow);color:#27220b}.color-btn.green{background:var(--green)}.color-btn.blue{background:var(--blue)}
+    .rules{font-size:13px;color:#cbd5e1;line-height:1.75}.rules ul{padding-left:20px;margin:12px 0}.rules li{margin:7px 0}
+    .winner{position:fixed;z-index:75;inset:0;background:radial-gradient(circle at 50% 30%,rgba(124,58,237,.32),rgba(0,0,0,.82) 65%);display:none;align-items:center;justify-content:center;padding:20px}.winner.show{display:flex}.winner-box{text-align:center;width:min(480px,92vw);background:#111725;border:1px solid #3b4560;border-radius:26px;padding:32px;box-shadow:var(--shadow)}.trophy{font-size:56px}.winner h1{margin:10px 0 8px;font-size:34px}.winner p{margin:0 0 20px;color:#aab6c8}.winner-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+    .toast-stack{position:fixed;right:14px;top:76px;z-index:100;display:grid;gap:9px;pointer-events:none}.toast{max-width:360px;background:#171e2f;border:1px solid #364058;border-radius:13px;padding:11px 13px;box-shadow:0 15px 32px rgba(0,0,0,.28);font-size:13px;color:#e5e7eb;animation:toastIn .2s ease}.toast.success{border-color:rgba(34,197,94,.5)}.toast.error{border-color:rgba(239,68,68,.55)}.toast.warn{border-color:rgba(245,158,11,.55)}@keyframes toastIn{from{opacity:0;transform:translateY(-7px)}to{opacity:1;transform:none}}
+    .muted{color:var(--muted)}.hidden{display:none!important}
+    @media(max-width:780px){.home-wrap{grid-template-columns:1fr;padding-top:34px}.hero{text-align:center}.hero p{font-size:16px}.feature-row{justify-content:center}.lobby-grid{grid-template-columns:1fr}.lobby-head{align-items:flex-start;flex-direction:column}.room-code{font-size:28px}.table-zone{min-height:260px;padding-top:26px}.table-center{grid-template-columns:80px 100px 80px;gap:12px}.draw-pile{width:70px;height:102px}.draw-pile:after{width:46px;height:68px}.card{width:66px;height:98px;margin-left:-17px;border-width:3px}.card:before{width:46px;height:72px}.card-face{font-size:26px}.opponents{gap:7px;overflow-x:auto;justify-content:flex-start;min-height:82px}.opp{min-width:105px;padding:9px}.logbar{top:98px}.game-top{padding:9px 10px}.game-actions .label-hide{display:none}.topbar{height:58px;padding:0 12px}.game-wrap{min-height:calc(100dvh - 58px)}}
+    @media(max-width:460px){.hero h1{letter-spacing:-2px}.join-card{padding:20px;border-radius:22px}.hand-zone{padding-left:4px;padding-right:4px}.me-bar{padding:0 6px}.btn{padding:10px 12px}.table-center{grid-template-columns:72px 92px 72px;gap:9px}.turn-info{min-width:92px}.turn-name{font-size:13px}.card{width:62px;height:92px}.card-face{font-size:24px}.room-code{letter-spacing:5px}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark">◈</div><span>UNO Online</span></div>
+    <div class="status-pill"><span id="connDot" class="dot"></span><span id="connText">未连接</span></div>
+  </header>
+  <main>
+    <section id="homeScreen" class="screen active">
+      <div class="home-wrap">
+        <div class="hero">
+          <div class="eyebrow">FRIENDS · P2P · NO SIGN-UP</div>
+          <h1><span>开个房间，<br>马上来一局。</span></h1>
+          <p>一个轻量的好友联机 UNO 桌。创建 6 位房间码，把链接发给朋友，2–4 人即可开始。无需账号，也不需要你维护游戏服务器。</p>
+          <div class="feature-row"><span class="chip">⚡ 浏览器点对点联机</span><span class="chip">📱 手机 / 电脑都能玩</span><span class="chip">🔒 只下发自己的手牌</span></div>
+        </div>
+        <div class="join-card">
+          <h2 id="homeTitle">开始游戏</h2>
+          <div id="homeSub" class="sub">输入你的昵称，然后创建房间或加入朋友的房间。</div>
+          <div class="field"><label for="nameInput">你的昵称</label><input id="nameInput" maxlength="18" autocomplete="nickname" placeholder="例如：Madison" /></div>
+          <button id="createBtn" class="btn primary full large">创建新房间</button>
+          <div class="divider">或者加入朋友</div>
+          <div class="field"><label for="roomInput">6 位房间码</label><input id="roomInput" class="room-input" maxlength="6" autocomplete="off" placeholder="ABC123" /></div>
+          <button id="joinBtn" class="btn secondary full large">加入房间</button>
+          <p class="help">房主请保持页面打开。联机基于 WebRTC；部分严格的校园/公司网络可能会限制点对点连接。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="lobbyScreen" class="screen">
+      <div class="lobby-wrap">
+        <div class="lobby-head"><div><div class="eyebrow">GAME LOBBY</div><h1>等待朋友加入</h1></div><div><div class="muted" style="font-size:12px;margin-bottom:6px">房间码</div><div id="lobbyRoomCode" class="room-code">------</div></div></div>
+        <div class="lobby-grid">
+          <div class="panel"><h3>玩家 <span id="playerCount" class="muted">0 / 4</span></h3><div id="playerList" class="player-list"></div></div>
+          <div class="panel">
+            <h3>邀请朋友</h3>
+            <div class="invite-box"><div class="label">分享这个链接</div><div id="inviteLink" class="invite-link"></div></div>
+            <button id="copyInviteBtn" class="btn secondary full">复制邀请链接</button>
+            <div id="hostControls" style="margin-top:14px"><button id="startBtn" class="btn primary full large" disabled>开始游戏</button><p class="help">至少 2 人即可开始，最多 4 人。</p></div>
+            <div id="guestHint" class="host-note hidden" style="margin-top:14px">等待房主开始游戏。你可以先把房间链接继续发给其他朋友。</div>
+            <button id="leaveLobbyBtn" class="btn ghost full" style="margin-top:8px">退出房间</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gameScreen" class="screen">
+      <div id="gameWrap" class="game-wrap">
+        <div class="game-top">
+          <div class="game-room"><span class="muted">房间</span><b id="gameRoomCode">------</b></div>
+          <div class="game-actions"><button id="copyGameInviteBtn" class="btn ghost"><span>🔗</span><span class="label-hide">邀请</span></button><button id="rulesBtn" class="btn ghost"><span>?</span><span class="label-hide">规则</span></button></div>
+        </div>
+        <div id="gameLog" class="logbar">游戏开始</div>
+        <div id="opponents" class="opponents"></div>
+        <div class="table-zone">
+          <div class="table-center">
+            <div><button id="drawPile" class="draw-pile" title="摸一张牌"><span id="deckCount" class="deck-count">0</span></button><div class="pile-label">摸牌堆</div></div>
+            <div class="turn-info"><div id="turnName" class="turn-name">等待中</div><div id="turnSub" class="turn-sub">轮到谁会显示在这里</div><div id="direction" class="direction">↻</div></div>
+            <div><div id="discardCard"></div><div class="pile-label">弃牌堆</div></div>
+          </div>
+        </div>
+        <div class="hand-zone">
+          <div class="me-bar"><div class="me-left"><strong id="meName">我</strong><span id="handCount" class="muted">0 张</span><span id="turnBadge" class="turn-badge">等待回合</span></div><div class="hand-actions"><button id="passBtn" class="btn secondary hidden">结束回合</button></div></div>
+          <div class="hand-scroll"><div id="hand" class="hand"></div></div>
+        </div>
+        <div id="pausedOverlay" class="paused-overlay hidden"><div class="paused-box"><h2>游戏已暂停</h2><p id="pausedText">有玩家掉线，等待重新连接。</p></div></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="colorModal" class="modal"><div class="modal-box"><h2>选择颜色</h2><p>打出万能牌后，选择接下来生效的颜色。</p><div class="colors"><button class="color-btn red" data-color="red">红色</button><button class="color-btn yellow" data-color="yellow">黄色</button><button class="color-btn green" data-color="green">绿色</button><button class="color-btn blue" data-color="blue">蓝色</button></div><button id="cancelColorBtn" class="btn ghost full" style="margin-top:10px">取消</button></div></div>
+<div id="rulesModal" class="modal"><div class="modal-box"><h2>本桌规则</h2><div class="rules"><ul><li>2–4 人，每人起手 7 张牌。</li><li>可出与当前颜色相同、数字/功能相同的牌，或万能牌。</li><li>跳过、反转、+2、万能、+4 均生效；2 人局中“反转”等同跳过。</li><li>万能 +4 仅在你手里没有当前颜色牌时可出。</li><li>摸牌后若该牌可出，你可以直接打出；否则自动结束回合。</li><li>手牌最先清空的人获胜。本版本会在只剩 1 张时自动提示 UNO，不设漏喊惩罚。</li></ul></div><button id="closeRulesBtn" class="btn secondary full">知道了</button></div></div>
+<div id="winnerOverlay" class="winner"><div class="winner-box"><div class="trophy">🏆</div><h1 id="winnerTitle">胜利！</h1><p id="winnerText"></p><div class="winner-actions"><button id="restartBtn" class="btn primary">再来一局</button><button id="winnerCloseBtn" class="btn secondary">查看牌桌</button></div></div></div>
+<div id="toastStack" class="toast-stack"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const COLORS = ['red','yellow','green','blue'];
+  const COLOR_NAME = {red:'红色',yellow:'黄色',green:'绿色',blue:'蓝色'};
+  const CARD_SYMBOL = {skip:'⊘',reverse:'↺',draw2:'+2',wild:'★',wild4:'+4'};
+  const app = {
+    role:null, room:null, peer:null, conn:null, conns:new Map(), connPlayer:new Map(),
+    playerId:getOrCreatePlayerId(), name:localStorage.getItem('uno_name') || '',
+    players:[], game:null, latestView:null, pendingWildCard:null, hostReady:false
+  };
+
+  function getOrCreatePlayerId(){
+    let id = localStorage.getItem('uno_player_id');
+    if(!id){ id='p_'+Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4); localStorage.setItem('uno_player_id',id); }
+    return id;
+  }
+  function escapeHTML(s=''){ return String(s).replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch])); }
+  function randomCode(){ const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<6;i++) s+=chars[Math.floor(Math.random()*chars.length)]; return s; }
+  function clampName(s){ return String(s||'').trim().replace(/\s+/g,' ').slice(0,18); }
+  function normRoom(s){ return String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6); }
+  function peerRoomId(code){ return 'uno-online-room-'+code.toLowerCase(); }
+  function setScreen(name){ ['home','lobby','game'].forEach(x => $(x+'Screen').classList.toggle('active',x===name)); }
+  function setConn(text,state=''){ $('connText').textContent=text; $('connDot').className='dot'+(state?' '+state:''); }
+  function toast(text,type=''){ const el=document.createElement('div'); el.className='toast '+type; el.textContent=text; $('toastStack').appendChild(el); setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(-5px)';setTimeout(()=>el.remove(),220)},3200); }
+  function inviteURL(){ return location.href.split('#')[0]+'#room='+app.room; }
+  async function copyInvite(){ const text=inviteURL(); try{ await navigator.clipboard.writeText(text); toast('邀请链接已复制','success'); }catch{ const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('邀请链接已复制','success'); } }
+  function closePeer(){ try{app.conn?.close()}catch{}; try{app.peer?.destroy()}catch{}; app.conn=null; app.peer=null; app.conns.clear(); app.connPlayer.clear(); app.hostReady=false; }
+  function leaveToHome(){ closePeer(); app.role=null;app.room=null;app.players=[];app.game=null;app.latestView=null; history.replaceState(null,'',location.href.split('#')[0]); setConn('未连接'); setScreen('home'); }
+
+  function saveName(){ const name=clampName($('nameInput').value); if(!name){toast('先输入一个昵称','warn');return null;} app.name=name; localStorage.setItem('uno_name',name); return name; }
+
+  function createRoom(){
+    if(typeof Peer==='undefined'){ toast('联机组件加载失败，请刷新页面重试','error'); return; }
+    if(!saveName()) return;
+    closePeer(); app.role='host'; setConn('正在创建房间','warn');
+    createHostWithFreshCode(0);
+  }
+  function createHostWithFreshCode(attempt){
+    const code=randomCode(); app.room=code;
+    const peer=new Peer(peerRoomId(code),{debug:0}); app.peer=peer;
+    let opened=false;
+    peer.on('open',()=>{ opened=true; app.hostReady=true; app.players=[{id:app.playerId,name:app.name,isHost:true,connected:true}]; setConn('房间已连接','ok'); history.replaceState(null,'','#room='+code); renderLobby(); setScreen('lobby'); });
+    peer.on('connection',(conn)=>{ setupHostConnection(conn); });
+    peer.on('error',(err)=>{
+      if(!opened && err?.type==='unavailable-id' && attempt<5){ try{peer.destroy()}catch{}; createHostWithFreshCode(attempt+1); return; }
+      console.error(err); toast(peerErrorText(err),'error'); setConn('连接异常','bad');
+    });
+    peer.on('disconnected',()=>setConn('信令连接中断','warn'));
+  }
+
+  function joinRoom(){
+    if(typeof Peer==='undefined'){ toast('联机组件加载失败，请刷新页面重试','error'); return; }
+    if(!saveName()) return;
+    const code=normRoom($('roomInput').value); if(code.length!==6){toast('请输入 6 位房间码','warn');return;}
+    closePeer(); app.role='guest'; app.room=code; setConn('正在加入房间','warn');
+    const peer=new Peer(undefined,{debug:0}); app.peer=peer;
+    let connected=false;
+    peer.on('open',()=>{
+      const conn=peer.connect(peerRoomId(code),{reliable:true,serialization:'json'}); app.conn=conn;
+      conn.on('open',()=>{ connected=true; setConn('已连接','ok'); conn.send({type:'join',playerId:app.playerId,name:app.name}); });
+      conn.on('data',handleGuestData);
+      conn.on('close',()=>{ setConn('与房主断开','bad'); if(app.latestView?.status==='playing') showPause('与房主的连接已断开。请确认房主页面仍然打开，然后刷新页面重连。'); else toast('与房主的连接已断开','error'); });
+      conn.on('error',err=>{console.error(err); toast('连接房间失败','error'); setConn('连接失败','bad');});
+      setTimeout(()=>{ if(!connected){ toast('没有找到这个房间，请检查房间码或确认房主仍在线','error'); setConn('未找到房间','bad'); } },9000);
+    });
+    peer.on('error',(err)=>{ console.error(err); toast(peerErrorText(err),'error'); setConn('连接异常','bad'); });
+  }
+  function peerErrorText(err){ const t=err?.type||''; if(t==='peer-unavailable')return '没有找到这个房间，可能房主已离开'; if(t==='network'||t==='server-error')return '网络连接失败，请稍后重试'; return '联机发生错误，请刷新页面重试'; }
+
+  function setupHostConnection(conn){
+    app.conns.set(conn.peer,conn);
+    conn.on('data',(msg)=>handleHostData(conn,msg));
+    conn.on('close',()=>{
+      const pid=app.connPlayer.get(conn.peer); app.conns.delete(conn.peer); app.connPlayer.delete(conn.peer);
+      if(pid){ const hasReplacement=[...app.connPlayer.entries()].some(([peerId,pid2])=>pid2===pid && app.conns.get(peerId)?.open); if(hasReplacement)return; const p=app.players.find(x=>x.id===pid); if(p){ p.connected=false; if(!app.game || app.game.status==='lobby'){ app.players=app.players.filter(x=>x.id!==pid); broadcastLobby(); } else { broadcastState(); } } }
+    });
+    conn.on('error',err=>console.error('guest conn error',err));
+  }
+  function handleHostData(conn,msg){
+    if(!msg||typeof msg!=='object') return;
+    if(msg.type==='join'){
+      const pid=String(msg.playerId||'').slice(0,64), name=clampName(msg.name);
+      if(!pid||!name){conn.send({type:'reject',reason:'昵称或身份信息无效'});return;}
+      let p=app.players.find(x=>x.id===pid);
+      if(p){ for(const [peerId,oldConn] of app.conns){ if(peerId!==conn.peer && app.connPlayer.get(peerId)===pid){ app.connPlayer.delete(peerId); try{oldConn.close()}catch{} } } p.name=name; p.connected=true; app.connPlayer.set(conn.peer,pid); conn._playerId=pid; conn.send({type:'joined',room:app.room}); if(app.game) broadcastState(); else broadcastLobby(); return; }
+      if(app.game){ conn.send({type:'reject',reason:'游戏已经开始，无法作为新玩家加入'}); return; }
+      if(app.players.length>=4){ conn.send({type:'reject',reason:'房间已满（最多 4 人）'}); return; }
+      p={id:pid,name,isHost:false,connected:true}; app.players.push(p); app.connPlayer.set(conn.peer,pid); conn._playerId=pid; conn.send({type:'joined',room:app.room}); toast(name+' 加入了房间','success'); broadcastLobby();
+      return;
+    }
+    const pid=conn._playerId || app.connPlayer.get(conn.peer); if(!pid)return;
+    if(msg.type==='action') handleGameAction(pid,msg.action,msg);
+  }
+  function handleGuestData(msg){
+    if(!msg||typeof msg!=='object')return;
+    if(msg.type==='reject'){ toast(msg.reason||'无法加入房间','error'); setConn('加入失败','bad'); return; }
+    if(msg.type==='joined'){ app.room=msg.room||app.room; history.replaceState(null,'','#room='+app.room); }
+    if(msg.type==='lobby'){ app.players=msg.players||[]; renderLobby(); setScreen('lobby'); }
+    if(msg.type==='state'){ app.latestView=msg.view; renderGame(msg.view); setScreen('game'); }
+    if(msg.type==='notice') toast(msg.text,msg.tone||'');
+  }
+
+  function broadcastLobby(){
+    const payload={type:'lobby',room:app.room,players:app.players.map(p=>({id:p.id,name:p.name,isHost:p.isHost,connected:p.connected})),hostId:app.players.find(p=>p.isHost)?.id};
+    for(const conn of app.conns.values()) if(conn.open) conn.send(payload);
+    renderLobby();
+  }
+  function renderLobby(){
+    $('lobbyRoomCode').textContent=app.room||'------'; $('inviteLink').textContent=inviteURL(); $('playerCount').textContent=app.players.length+' / 4';
+    $('playerList').innerHTML=app.players.map((p,i)=>`<div class="player-row"><div class="avatar">${escapeHTML((p.name||'?').slice(0,1).toUpperCase())}</div><div class="player-info"><div class="player-name">${escapeHTML(p.name)}${p.id===app.playerId?' <span class="muted">(你)</span>':''}</div><div class="player-meta">${p.connected===false?'离线':'已连接'}</div></div><span class="seat">${p.isHost?'房主':'玩家 '+(i+1)}</span></div>`).join('');
+    const host=app.role==='host'; $('hostControls').classList.toggle('hidden',!host); $('guestHint').classList.toggle('hidden',host); $('startBtn').disabled=!(host&&app.players.length>=2&&app.players.length<=4&&app.players.every(p=>p.connected));
+  }
+
+  function makeDeck(){
+    let idn=0; const deck=[]; const add=(color,value,kind)=>deck.push({id:'c'+(++idn)+'_'+Math.random().toString(36).slice(2,6),color,value,kind});
+    for(const color of COLORS){ add(color,'0','number'); for(let n=1;n<=9;n++){add(color,String(n),'number');add(color,String(n),'number');} for(const v of ['skip','reverse','draw2']){add(color,v,v);add(color,v,v);} }
+    for(let i=0;i<4;i++){add(null,'wild','wild');add(null,'wild4','wild4');}
+    return shuffle(deck);
+  }
+  function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+  function startGame(){
+    if(app.role!=='host'||app.players.length<2)return; if(!app.players.every(p=>p.connected)){toast('有玩家未连接，暂时不能开始','warn');return;}
+    const deck=makeDeck(), hands={}; app.players.forEach(p=>hands[p.id]=[]);
+    for(let r=0;r<7;r++) for(const p of app.players) hands[p.id].push(deck.pop());
+    let idx=deck.findIndex(c=>c.kind==='number'); if(idx<0)idx=0; const top=deck.splice(idx,1)[0];
+    app.game={status:'playing',deck,discard:[top],hands,currentIndex:0,direction:1,activeColor:top.color,currentDrawn:null,winnerId:null,lastAction:'游戏开始，'+app.players[0].name+' 先手'};
+    broadcastState(); setScreen('game');
+  }
+  function currentPlayer(){ return app.players[app.game.currentIndex]; }
+  function topCard(){ return app.game.discard[app.game.discard.length-1]; }
+  function wrapIndex(i,n){ return ((i%n)+n)%n; }
+  function nextIndex(steps=1){ return wrapIndex(app.game.currentIndex+app.game.direction*steps,app.players.length); }
+  function advance(steps=1){ app.game.currentIndex=nextIndex(steps); app.game.currentDrawn=null; }
+  function ensureDeck(){
+    if(app.game.deck.length>0)return;
+    if(app.game.discard.length<=1)return;
+    const top=app.game.discard.pop(); app.game.deck=shuffle(app.game.discard.splice(0)); app.game.discard=[top];
+  }
+  function drawOne(pid){ ensureDeck(); const c=app.game.deck.pop(); if(c) app.game.hands[pid].push(c); return c; }
+  function canPlayCard(card,hand){
+    const top=topCard(); if(!card||!top)return false;
+    if(card.kind==='wild4' && hand.some(c=>c.id!==card.id && c.color===app.game.activeColor)) return false;
+    return card.color===app.game.activeColor || card.value===top.value || card.kind==='wild' || card.kind==='wild4';
+  }
+  function handleGameAction(pid,action,msg={}){
+    if(app.role!=='host'||!app.game||app.game.status!=='playing')return;
+    if(app.players.some(p=>!p.connected)){ sendNotice(pid,'有玩家掉线，游戏暂时暂停','warn'); return; }
+    const cur=currentPlayer(); if(!cur||cur.id!==pid){ sendNotice(pid,'还没轮到你','warn'); return; }
+    const hand=app.game.hands[pid];
+    if(action==='draw'){
+      if(app.game.currentDrawn){sendNotice(pid,'你已经摸过牌了，可以打出刚摸的牌或结束回合','warn');return;}
+      const card=drawOne(pid); if(!card){sendNotice(pid,'牌堆已经空了','warn');return;}
+      if(canPlayCard(card,hand)){ app.game.currentDrawn=card.id; app.game.lastAction=cur.name+' 摸了一张牌，可以选择打出或结束回合'; }
+      else { app.game.lastAction=cur.name+' 摸了一张牌并结束回合'; advance(1); }
+      broadcastState(); return;
+    }
+    if(action==='pass'){
+      if(!app.game.currentDrawn){return;} app.game.lastAction=cur.name+' 保留了摸到的牌'; advance(1); broadcastState(); return;
+    }
+    if(action==='play'){
+      const card=hand.find(c=>c.id===msg.cardId); if(!card){return;}
+      if(app.game.currentDrawn && card.id!==app.game.currentDrawn){sendNotice(pid,'摸牌后只能打出刚摸到的那一张','warn');return;}
+      if(!canPlayCard(card,hand)){sendNotice(pid,card.kind==='wild4'?'手里还有当前颜色的牌，不能出 +4':'这张牌现在不能出','warn');return;}
+      let chosen=null; if(card.kind==='wild'||card.kind==='wild4'){chosen=COLORS.includes(msg.chosenColor)?msg.chosenColor:null;if(!chosen){sendNotice(pid,'请先选择颜色','warn');return;}}
+      const pos=hand.findIndex(c=>c.id===card.id); hand.splice(pos,1); app.game.discard.push(card); app.game.activeColor=chosen||card.color; app.game.currentDrawn=null;
+      let actionText=cur.name+' 打出了 '+cardLabel(card); if(chosen) actionText+='，选择'+COLOR_NAME[chosen];
+      if(hand.length===0){ app.game.status='finished'; app.game.winnerId=pid; app.game.lastAction=cur.name+' 打光了所有手牌！'; broadcastState(); return; }
+      if(hand.length===1) actionText+=' · UNO！';
+      if(card.kind==='skip'){ actionText+='，跳过下一位'; advance(2); }
+      else if(card.kind==='reverse'){ app.game.direction*=-1; actionText+='，方向反转'; advance(app.players.length===2?2:1); }
+      else if(card.kind==='draw2'){ const ti=nextIndex(1), target=app.players[ti]; drawOne(target.id);drawOne(target.id);actionText+='，'+target.name+' 摸 2 张并被跳过';advance(2); }
+      else if(card.kind==='wild4'){ const ti=nextIndex(1), target=app.players[ti];for(let i=0;i<4;i++)drawOne(target.id);actionText+='，'+target.name+' 摸 4 张并被跳过';advance(2); }
+      else advance(1);
+      app.game.lastAction=actionText; broadcastState(); return;
+    }
+  }
+  function cardLabel(c){ if(c.kind==='number')return (c.color?COLOR_NAME[c.color]:'')+' '+c.value; if(c.kind==='skip')return COLOR_NAME[c.color]+' 跳过'; if(c.kind==='reverse')return COLOR_NAME[c.color]+' 反转'; if(c.kind==='draw2')return COLOR_NAME[c.color]+' +2'; if(c.kind==='wild4')return '万能 +4'; return '万能牌'; }
+  function sendNotice(pid,text,tone=''){
+    if(pid===app.playerId){toast(text,tone);return;} for(const [peer,conn] of app.conns){if(app.connPlayer.get(peer)===pid&&conn.open){conn.send({type:'notice',text,tone});break;}}
+  }
+  function buildView(pid){
+    const g=app.game; const me=app.players.find(p=>p.id===pid); return {room:app.room,status:g.status,meId:pid,meName:me?.name||'',players:app.players.map(p=>({id:p.id,name:p.name,isHost:p.isHost,connected:p.connected,cardCount:g.hands[p.id]?.length||0})),hand:g.hands[pid]||[],topCard:topCard(),activeColor:g.activeColor,turnPlayerId:currentPlayer()?.id,direction:g.direction,deckCount:g.deck.length,currentDrawn:(currentPlayer()?.id===pid?g.currentDrawn:null),winnerId:g.winnerId,lastAction:g.lastAction,paused:app.players.some(p=>!p.connected)};
+  }
+  function sendStateTo(pid,conn){ if(!app.game)return; conn.send({type:'state',view:buildView(pid)}); }
+  function broadcastState(){
+    if(!app.game)return; app.latestView=buildView(app.playerId); renderGame(app.latestView); for(const [peer,conn] of app.conns){ const pid=app.connPlayer.get(peer); if(pid&&conn.open)sendStateTo(pid,conn); }
+  }
+
+  function renderGame(v){
+    app.latestView=v; $('gameRoomCode').textContent=v.room; $('meName').textContent=v.meName||'我'; $('handCount').textContent=v.hand.length+' 张'; $('deckCount').textContent=v.deckCount; $('gameLog').textContent=v.lastAction||'';
+    const turn=v.players.find(p=>p.id===v.turnPlayerId); const myTurn=v.turnPlayerId===v.meId && v.status==='playing' && !v.paused;
+    $('turnName').textContent=myTurn?'轮到你了':(turn?turn.name+' 的回合':'等待中'); $('turnSub').textContent='当前颜色：'+COLOR_NAME[v.activeColor]; $('direction').textContent=v.direction===1?'↻':'↺';
+    $('turnBadge').textContent=myTurn?'你的回合':'等待回合'; $('turnBadge').classList.toggle('active',myTurn); $('drawPile').disabled=!myTurn||!!v.currentDrawn; $('passBtn').classList.toggle('hidden',!(myTurn&&v.currentDrawn));
+    $('opponents').innerHTML=v.players.filter(p=>p.id!==v.meId).map(p=>`<div class="opp ${p.id===v.turnPlayerId?'current':''} ${p.connected?'':'offline'}"><div class="opp-name">${escapeHTML(p.name)}${p.isHost?' · 房主':''}</div><div class="opp-count">${p.connected?'手牌 '+p.cardCount+' 张':'已掉线'}</div><div class="mini-cards">${Array.from({length:Math.min(8,p.cardCount)},(_,i)=>`<i class="mini-card" style="--r:${(i-3)*2}deg"></i>`).join('')}</div></div>`).join('');
+    $('discardCard').innerHTML=''; $('discardCard').appendChild(makeCardEl(v.topCard,false,false));
+    $('hand').innerHTML='';
+    v.hand.forEach(card=>{ const playable=myTurn && (!v.currentDrawn||v.currentDrawn===card.id) && clientCanPlay(card,v.hand,v); const el=makeCardEl(card,true,playable); if(v.currentDrawn===card.id){const f=document.createElement('span');f.className='drawn-flag';f.title='刚摸到的牌';el.appendChild(f);} el.disabled=!playable; if(playable)el.addEventListener('click',()=>requestPlay(card)); $('hand').appendChild(el); });
+    if(v.paused) showPause('有玩家掉线，等待重新连接后会自动继续。'); else hidePause();
+    if(v.status==='finished'){ const winner=v.players.find(p=>p.id===v.winnerId); showWinner(winner); }
+  }
+  function clientCanPlay(card,hand,v){
+    if(card.kind==='wild4' && hand.some(c=>c.id!==card.id && c.color===v.activeColor))return false;
+    return card.color===v.activeColor||card.value===v.topCard.value||card.kind==='wild'||card.kind==='wild4';
+  }
+  function makeCardEl(card,interactive=false,playable=false){
+    const el=document.createElement(interactive?'button':'div'); el.className='card '+(card.color||'wild')+(interactive?(playable?' playable':' not-playable'):'');
+    const symbol=card.kind==='number'?card.value:CARD_SYMBOL[card.kind]||'?'; el.innerHTML=`<span class="card-corner">${escapeHTML(symbol)}</span><span class="card-face">${escapeHTML(symbol)}</span><span class="card-corner bottom">${escapeHTML(symbol)}</span>`; el.title=cardLabel(card); return el;
+  }
+  function requestPlay(card){ if(card.kind==='wild'||card.kind==='wild4'){app.pendingWildCard=card.id;$('colorModal').classList.add('show');return;} sendAction('play',{cardId:card.id}); }
+  function sendAction(action,extra={}){ if(app.role==='host')handleGameAction(app.playerId,action,extra); else if(app.conn?.open)app.conn.send({type:'action',action,...extra}); }
+  function showPause(text){$('pausedText').textContent=text;$('pausedOverlay').classList.remove('hidden')} function hidePause(){$('pausedOverlay').classList.add('hidden')}
+  function showWinner(winner){ const mine=winner?.id===app.playerId; $('winnerTitle').textContent=mine?'你赢了！':(winner?winner.name+' 获胜！':'游戏结束'); $('winnerText').textContent=mine?'漂亮！你最先打光了所有手牌。':'这一局结束了，随时可以再来一局。'; $('restartBtn').classList.toggle('hidden',app.role!=='host'); $('winnerOverlay').classList.add('show'); }
+  function restartGame(){ $('winnerOverlay').classList.remove('show'); startGame(); }
+
+  $('createBtn').addEventListener('click',createRoom); $('joinBtn').addEventListener('click',joinRoom); $('roomInput').addEventListener('input',e=>e.target.value=normRoom(e.target.value));
+  $('nameInput').value=app.name; $('roomInput').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom()}); $('nameInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&$('roomInput').value.length===6)joinRoom()});
+  $('copyInviteBtn').addEventListener('click',copyInvite); $('copyGameInviteBtn').addEventListener('click',copyInvite); $('leaveLobbyBtn').addEventListener('click',leaveToHome); $('startBtn').addEventListener('click',startGame); $('drawPile').addEventListener('click',()=>sendAction('draw')); $('passBtn').addEventListener('click',()=>sendAction('pass'));
+  document.querySelectorAll('.color-btn').forEach(btn=>btn.addEventListener('click',()=>{ const color=btn.dataset.color, cardId=app.pendingWildCard; app.pendingWildCard=null; $('colorModal').classList.remove('show'); if(cardId)sendAction('play',{cardId,chosenColor:color}); }));
+  $('cancelColorBtn').addEventListener('click',()=>{app.pendingWildCard=null;$('colorModal').classList.remove('show')});
+  $('rulesBtn').addEventListener('click',()=>$('rulesModal').classList.add('show')); $('closeRulesBtn').addEventListener('click',()=>$('rulesModal').classList.remove('show')); $('winnerCloseBtn').addEventListener('click',()=>$('winnerOverlay').classList.remove('show')); $('restartBtn').addEventListener('click',restartGame);
+  for(const id of ['colorModal','rulesModal']) $(id).addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('show')});
+  window.addEventListener('beforeunload',()=>{try{app.peer?.destroy()}catch{}});
+
+  const hash=new URLSearchParams(location.hash.replace(/^#/,'')); const pre=normRoom(hash.get('room')); if(pre.length===6){$('roomInput').value=pre;$('homeTitle').textContent='加入房间 '+pre;$('homeSub').textContent='朋友已经把房间准备好了，输入昵称即可加入。'}
+})();
+</script>
+</body>
+</html>
