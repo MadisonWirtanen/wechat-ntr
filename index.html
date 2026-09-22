@@ -27,6 +27,21 @@
 .file-card{border:1px solid #e6ebe5;border-radius:10px;padding:14px;width:270px;box-shadow:0 2px 6px #21352104}.file-title{font-weight:600}.file-meta{color:#899188}.file-status{color:#52705a;margin-top:10px}.file-advice{margin-top:10px;padding:8px 10px;border-radius:6px;background:#fbf5e9;color:#896b38;font-size:11px;line-height:1.7}.file-actions{border-top:1px solid #eef0ec;padding-top:5px;margin-top:10px}.file-card progress{margin-top:8px}.compose-error{padding:9px 12px;border-radius:7px;background:#fff0ed;line-height:1.6}.empty{color:#909b92;line-height:2.2}.banner{font-size:12px}.intro{color:#79857d}.footnote{color:#909990}
 @media(max-width:480px){.info{padding:16px 18px}.info-grid{grid-template-columns:1fr;gap:12px}.info-heading span{display:none}.keyboard-hint{display:none}.file-card{width:250px}}
 @media(max-height:540px){.compose-note{display:none}}
+
+/* Display-only receipt speed; existing layout and transport remain unchanged. */
+/* Only the meter below the existing progress bar is restyled. */
+.transfer-meter{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:9px;padding:10px;background:#f7f9f7;border:1px solid #edf1ed;border-radius:7px;line-height:1.45;font-variant-numeric:tabular-nums}
+.transfer-meter .transfer-stat{min-width:0;display:flex;flex-direction:column;gap:4px}
+.transfer-meter .transfer-stat+.transfer-stat{padding-left:10px;border-left:1px solid #e4eae4}
+.transfer-meter .transfer-label{font-size:10px;line-height:1.5;color:#78847a;white-space:nowrap}
+.transfer-meter .transfer-reading{display:flex;align-items:baseline;flex-wrap:wrap;gap:1px 4px;min-height:23px;min-width:0}
+.transfer-meter .transfer-value{font-size:18px;line-height:1.25;font-weight:600;letter-spacing:-.2px;color:#287549;overflow-wrap:anywhere}
+.transfer-meter .transfer-unit{font-size:10px;line-height:1.4;font-weight:400;letter-spacing:0;color:#68796c;white-space:nowrap}
+.transfer-meter .transfer-time{font-size:13px;line-height:1.55;font-weight:500;letter-spacing:0;color:#4d5d51;padding-top:1px;min-height:23px}
+.transfer-meter[data-state=waiting] .transfer-value,.transfer-meter[data-state=measuring] .transfer-value{color:#7a857d}
+.transfer-meter[data-state=complete]{background:#f8f9f8;border-color:#eef0ed}
+.transfer-meter[data-state=complete] .transfer-value{color:#526858}
+@media(max-width:360px){.transfer-meter{gap:7px;padding:9px 8px}.transfer-meter .transfer-stat+.transfer-stat{padding-left:8px}.transfer-meter .transfer-value{font-size:16px}.transfer-meter .transfer-unit{font-size:9px}.transfer-meter .transfer-time{font-size:12px}}
 </style>
 </head>
 <body>
@@ -164,6 +179,9 @@ SOFTWARE.
   const time=element('div','time',new Date(msg.timestamp).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false}));body.append(time);row.append(avatar,body);append(row,true);
  }
  function receive(s,topic,payload,packet) {
+  if(session!==s)return;
+  if(payload?.constructor?.isBuffer?.(payload))s.bufferType=payload.constructor;
+  if(topic===binTopic(s,s.id)){receiveBinary(s,topic,payload,packet);return;}
   if(session!==s || (topic!==s.topic && topic!==s.topic+'/files/v1') || packet?.retain || payload.length>32768)return;
   try {
    const text=CryptoJS.AES.decrypt(payload.toString(),s.key).toString(CryptoJS.enc.Utf8);if(!text || text.length>12000)return;
@@ -182,7 +200,7 @@ SOFTWARE.
   let c;
   try {
    const leave=envelope(s,'leave');
-   c=mqtt.connect(BROKER,{username:'client',password:'client',protocol:'wss',clientId:'mqttjs_'+s.id,clean:true,keepalive:30,connectTimeout:15000,reconnectPeriod:3000,resubscribe:false,queueQoSZero:false,will:{topic:s.topic,payload:encrypt(leave,s.key),qos:0,retain:false}});
+   c=mqtt.connect(BROKER,{username:'client',password:'client',protocol:'wss',clientId:'mqttjs_'+s.id,clean:true,keepalive:30,connectTimeout:15000,reconnectPeriod:3000,resubscribe:false,queueQoSZero:false,createWebsocket:(url,protocols)=>{const socket=new WebSocket(url,protocols);s.socket=socket;return socket;},will:{topic:s.topic,payload:encrypt(leave,s.key),qos:0,retain:false}});
   } catch (_) { state(s,'error','连接失败','无法建立连接，请点击重试。');return; }
   s.client=c;
   c.on('connect',()=>{
@@ -194,6 +212,10 @@ SOFTWARE.
     if(session!==s || s.client!==c || !c.connected)return;
     clearTimeout(s.subscribeTimer);
     if(err || granted?.length!==2 || granted.some(g=>g.qos===128)){state(s,'error','无法进入房间','暂时无法进入房间，请重试。');return;}
+    s.binaryReady=false;
+    if(hasBinaryCrypto())c.subscribe(binTopic(s,s.id),{qos:0},(error,list)=>{
+     if(session===s&&s.client===c&&c.connected)s.binaryReady=!error&&list?.length===1&&list[0].qos!==128;
+    });
     state(s,'ready','在线 · 临时会话');
     if(s.joined)system('连接已恢复，断线期间的消息不会补发。');
     s.joined=true;
@@ -262,7 +284,7 @@ SOFTWARE.
  const FILE_RECOMMENDED=5*1024*1024, CHUNK=8192;
  const attachButton=$('attachButton'), fileInput=$('fileInput');
  let preparing=false;
- function fileState(s){return s.files||(s.files={items:new Map(),bytes:0,queue:[],working:false});}
+ function fileState(s){return s.files||(s.files={items:new Map(),bytes:0,queue:[],working:false,epoch:0});}
  function fileNotice(text){ui.sendError.textContent=text;ui.sendError.hidden=false;}
  function fileControls(){attachButton.disabled=!connected()||preparing;}
  function bytesLabel(n){return n<1024?`${n} B`:`${(n/1024/1024).toFixed(2)} MiB`;}
@@ -274,6 +296,80 @@ SOFTWARE.
   if(session!==s||!connected())return false;
   try{s.client.publish(s.topic+'/files/v1',encrypt({...envelope(s,'attachment'),...data},s.key),{qos:0,retain:false});return true;}catch(_){return false;}
  }
+ // Display-only file meter. It never publishes, requests or schedules file data.
+ // All mutable meter state and its repaint timer are separate from transport state.
+ const fileMeters = new WeakMap();
+ function attachFileMeter(t){
+  if(t.own)return;
+  const node=element('div','transfer-meter');node.hidden=true;node.setAttribute('aria-live','off');
+  node.setAttribute('role','group');node.setAttribute('aria-label','\u6587\u4ef6\u4f20\u8f93\u7edf\u8ba1');
+  node.title='\u6309\u5b9e\u9645\u6536\u5230\u7684\u539f\u6587\u4ef6\u5b57\u8282\u8ba1\u7b97\uff0c\u4e0d\u542b\u91cd\u590d\u5206\u5757\u548c\u534f\u8bae\u5f00\u9500\u3002';
+  const rateGroup=element('div','transfer-stat'),etaGroup=element('div','transfer-stat');
+  const rateLabel=element('span','transfer-label','\u4f20\u8f93\u901f\u5ea6'),etaLabel=element('span','transfer-label','\u9884\u8ba1\u5269\u4f59');
+  const reading=element('div','transfer-reading'),rate=element('span','transfer-value transfer-rate'),unit=element('span','transfer-unit'),eta=element('span','transfer-value transfer-time transfer-eta');
+  reading.append(rate,unit);rateGroup.append(rateLabel,reading);etaGroup.append(etaLabel,eta);
+  node.append(rateGroup,etaGroup);t.card.insertBefore(node,t.actions);
+  fileMeters.set(t,{node,rate,unit,eta,rateLabel,etaLabel,bytes:0,elapsed:0,activeSince:null,timer:null,samples:[]});
+ }
+ // Presentation only: no transport state or measurement calculations are changed.
+ function showFileMeter(m,state,rate,eta){
+  const pieces=rate.split(' ');
+  m.node.dataset.state=state;
+  m.rateLabel.textContent=state==='complete'?'\u5e73\u5747\u901f\u5ea6':'\u4f20\u8f93\u901f\u5ea6';
+  m.etaLabel.textContent=state==='complete'?'\u63a5\u6536\u7528\u65f6':'\u9884\u8ba1\u5269\u4f59';
+  m.rate.textContent=pieces[0];m.unit.textContent=pieces.slice(1).join(' ');m.unit.hidden=!m.unit.textContent;
+  m.eta.textContent=eta;
+ }
+ function meterRate(bytesPerSecond){
+  if(!Number.isFinite(bytesPerSecond)||bytesPerSecond<0)return '\u2014';
+  return bytesPerSecond>=1024*1024?(bytesPerSecond/1024/1024).toFixed(2)+' MiB/s':(bytesPerSecond/1024).toFixed(1)+' KiB/s';
+ }
+ function meterDuration(ms){
+  if(!Number.isFinite(ms)||ms<0)return '\u2014';
+  if(ms<1000)return '<1\u79d2';
+  const seconds=Math.ceil(ms/1000);
+  if(seconds<60)return seconds+'\u79d2';
+  if(seconds<3600)return Math.floor(seconds/60)+'\u5206'+(seconds%60?seconds%60+'\u79d2':'');
+  return Math.floor(seconds/3600)+'\u5c0f\u65f6'+(Math.ceil(seconds%3600/60)?Math.ceil(seconds%3600/60)+'\u5206':'');
+ }
+ function paintFileMeter(t){
+  const m=fileMeters.get(t);if(!m||m.activeSince===null)return;
+  const now=performance.now();m.samples.push({at:now,bytes:m.bytes});
+  while(m.samples.length>1&&m.samples[1].at<=now-3000)m.samples.shift();
+  const first=m.samples[0],dt=now-first.at;
+  m.node.hidden=false;
+  if(dt<500){showFileMeter(m,'measuring','\u2014','\u8ba1\u7b97\u4e2d\u2026');return;}
+  const speed=Math.max(0,(m.bytes-first.bytes)*1000/dt);
+  showFileMeter(m,speed>0?'receiving':'waiting',meterRate(speed),speed>0?meterDuration(Math.max(0,t.size-m.bytes)*1000/speed):'\u7b49\u5f85\u6570\u636e');
+ }
+ function startFileMeter(t){
+  const m=fileMeters.get(t);if(!m)return;
+  clearTimeout(m.timer);m.timer=null;
+  if(!t.parts.size){m.bytes=0;m.elapsed=0;m.activeSince=null;}
+  const now=performance.now();
+  if(m.activeSince===null)m.activeSince=now;
+  m.samples=[{at:now,bytes:m.bytes}];
+  const tick=()=>{
+   if(!t.running||t.verifying||t.removed){holdFileMeter(t);return;}
+   paintFileMeter(t);m.timer=setTimeout(tick,500);
+  };
+  tick();
+ }
+ function recordFileMeter(t,bytes){
+  const m=fileMeters.get(t);if(m)m.bytes+=bytes;
+ }
+ function holdFileMeter(t){
+  const m=fileMeters.get(t);if(!m)return;
+  clearTimeout(m.timer);m.timer=null;
+  if(m.activeSince!==null){m.elapsed+=Math.max(0,performance.now()-m.activeSince);m.activeSince=null;}
+  m.node.hidden=true;m.rate.textContent='';m.unit.textContent='';m.eta.textContent='';
+ }
+ function finishFileMeter(t){
+  const m=fileMeters.get(t);if(!m)return;
+  holdFileMeter(t);
+  showFileMeter(m,'complete',meterRate(m.elapsed>0?m.bytes*1000/m.elapsed:0),meterDuration(m.elapsed));
+  m.node.hidden=false;
+ }
  function fileCard(s,t){
   const row=element('article',t.own?'message self':'message');
   const avatar=element('div','avatar',Array.from(t.nickname)[0]||'文');avatar.style.background=t.own?'#58ac76':'#7c93b5';
@@ -282,20 +378,25 @@ SOFTWARE.
   if(t.size>FILE_RECOMMENDED)card.append(element('div','file-advice','大文件 · 可能较慢或接收不完整，请保持在线。'));
   t.status=element('div','file-status',t.own?'原文件已准备':'等待接收');t.progress=document.createElement('progress');t.progress.max=t.total||1;t.progress.value=0;
   t.actions=element('div','file-actions');card.append(t.status,t.progress,t.actions);body.append(card);row.append(avatar,body);t.row=row;t.card=card;
+  attachFileMeter(t); // meter-only
   const discard=element('button','link','移除');discard.type='button';discard.onclick=()=>releaseFile(s,t);t.actions.append(discard);
   append(row,true);
  }
  function action(t,label,fn){const b=element('button','link',label);b.type='button';b.onclick=fn;t.actions.prepend(b);return b;}
  function fileStatus(t,text){t.status.textContent=text;}
- function stopReceive(t,text){clearTimeout(t.timer);t.running=false;if(text)fileStatus(t,text);if(t.receive)t.receive.hidden=false;}
+ function stopReceive(t,text){
+  clearTimeout(t.timer);t.running=false;t.generation=(t.generation||0)+1;t.pending?.clear();holdFileMeter(t);
+  if(text)fileStatus(t,text);if(t.pause)t.pause.hidden=true;
+  if(t.receive&&!t.done){t.receive.hidden=false;t.receive.textContent=t.parts.size?'\u7ee7\u7eed\u63a5\u6536':'\u63a5\u6536\u539f\u6587\u4ef6';}
+ }
  function releaseFile(s,t){
-  const f=fileState(s);stopReceive(t);t.removed=true;if(t.reserved)f.bytes-=t.size;t.reserved=false;t.bytes=null;t.blob=null;
+  const f=fileState(s);if(!t.own&&t.running)filePublish(s,{op:'cancel',transfer:t.transfer,to:t.sender});stopReceive(t);t.removed=true;f.queue=f.queue.filter(q=>q.t!==t);t.cryptoKey=null;if(t.reserved)f.bytes-=t.size;t.reserved=false;t.bytes=null;t.blob=null;
   if(t.url)URL.revokeObjectURL(t.url);if(t.previewURL)URL.revokeObjectURL(t.previewURL);
   if($('preview').open)$('preview').close();$('previewImage').removeAttribute('src');
   f.items.delete(t.key);t.row.remove();
  }
- function interruptFiles(s){if(!s.files)return;for(const t of s.files.items.values())if(t.running)stopReceive(t,'传输已暂停 · 重连后可继续接收');s.files.queue=[];}
- function clearFiles(s){if(!s.files)return;for(const t of [...s.files.items.values()])releaseFile(s,t);s.files.queue=[];}
+ function interruptFiles(s){if(!s.files)return;for(const t of s.files.items.values())if(t.running)stopReceive(t,'传输已暂停 · 重连后可继续接收');s.files.queue=[];s.files.epoch=(s.files.epoch||0)+1;s.files.peers?.clear();closePacer(s);}
+ function clearFiles(s){if(!s.files)return;for(const t of [...s.files.items.values()])releaseFile(s,t);s.files.queue=[];s.files.epoch=(s.files.epoch||0)+1;s.files.peers?.clear();closePacer(s);}
  function imageType(bytes){
   const b=bytes;
   if(b.length>=8&&b[0]===137&&b[1]===80&&b[2]===78&&b[3]===71&&b[4]===13&&b[5]===10&&b[6]===26&&b[7]===10)return 'image/png';
@@ -316,7 +417,7 @@ SOFTWARE.
    button.onclick=()=>{$('previewImage').src=t.previewURL;$('previewImage').alt=t.name;$('preview').showModal();};t.card.prepend(button);
   }
  }
- function announce(s,t){if(filePublish(s,{op:'offer',transfer:t.transfer,name:t.name,size:t.size,hash:t.hash,total:t.total})){fileStatus(t,t.acks.size?`${t.acks.size} 人已接收并校验`:'等待对方接收 · 请保持在线');}else fileStatus(t,'连接已断开 · 恢复后可重新通知');}
+ function announce(s,t){if(filePublish(s,{op:'offer',transfer:t.transfer,name:t.name,size:t.size,hash:t.hash,total:t.total,...(t.bin===2?{bin:2,salt:t.salt}:{})})){fileStatus(t,t.acks.size?`${t.acks.size} 人已接收并校验`:'等待对方接收 · 请保持在线');}else fileStatus(t,'连接已断开 · 恢复后可重新通知');}
  attachButton.onclick=()=>{if(connected()&&!preparing)fileInput.click();};
  fileInput.onchange=async()=>{
   const file=fileInput.files[0];fileInput.value='';if(!file||!connected())return;
@@ -327,6 +428,7 @@ SOFTWARE.
   try{
    const bytes=new Uint8Array(await file.arrayBuffer()),hash=await digest(bytes);if(session!==s)return;
    t={own:true,nickname:s.nickname,transfer:uid(),name:file.name.slice(0,255)||'附件',size:bytes.length,hash,total:Math.ceil(bytes.length/CHUNK),bytes,acks:new Set(),reserved:true};
+   await prepareBinary(s,t);if(session!==s)return;
    t.key=s.id+':'+t.transfer;f.items.set(t.key,t);fileCard(s,t);t.progress.value=t.total||1;downloadReady(t);action(t,'重新通知',()=>announce(s,t));announce(s,t);
   }catch(_){f.bytes-=file.size;fileNotice('无法读取附件，可能是设备内存不足；请移除其他附件后重试。');}
   finally{preparing=false;fileControls();}
@@ -341,9 +443,12 @@ SOFTWARE.
   }
   if(!t.reserved){f.bytes+=t.size;t.reserved=true;}
   t.running=true;t.receive.hidden=true;t.rounds=0;t.lastCount=t.parts.size;
+  t.wallStarted=t.parts.size?(t.wallStarted||nowMs()):nowMs();
+  if(t.pause)t.pause.hidden=false;beginSteady(s,t);
+  startFileMeter(t); // meter-only
   if(!t.total){verifyFile(s,t);return;}requestParts(s,t);
  }
- function requestParts(s,t){
+ function requestLegacyParts(s,t){
   if(!t.running||session!==s||t.removed)return;
   if(!connected()){stopReceive(t,'传输已暂停 · 重连后可继续接收');return;}
   if(t.parts.size===t.total){verifyFile(s,t);return;}
@@ -354,50 +459,279 @@ SOFTWARE.
   clearTimeout(t.timer);t.timer=setTimeout(()=>requestParts(s,t),1600);
  }
  async function verifyFile(s,t){
-  if(t.verifying||t.done)return;t.verifying=true;clearTimeout(t.timer);fileStatus(t,'正在校验文件完整性…');
+  if(t.verifying||t.done)return;t.verifying=true;clearTimeout(t.timer);fileStatus(t,'正在校验文件完整性…');if(t.pause)t.pause.hidden=true;holdFileMeter(t); /* meter-only */
   try{
    const hash=await digest(t.bytes);if(session!==s||t.removed)return;
    if(hash!==t.hash){t.bytes=null;t.parts=new Set();stopReceive(t,'文件校验未通过，请重新接收。');return;}
-   t.done=true;t.running=false;t.progress.value=t.total||1;fileStatus(t,'接收完成 · 完整性校验通过');downloadReady(t);
+   t.done=true;t.running=false;t.wallFinished=nowMs();if(t.pause)t.pause.hidden=true;t.progress.value=t.total||1;fileStatus(t,'接收完成 · 完整性校验通过');downloadReady(t);finishFileMeter(t); /* same throughput meter as the baseline */
    filePublish(s,{op:'ack',transfer:t.transfer,to:t.sender,hash});
   }catch(_){if(session===s&&!t.removed)stopReceive(t,'校验失败，请重新接收。');}
   finally{t.verifying=false;}
  }
+ // MQTT attachment v2: binary data, modest fixed window and paced sends.
+ // Room membership is still unauthenticated and time-keyed; this is NOT a
+ // claim of private messaging. PBKDF2 is cached once per file, never per chunk.
+ const STEADY=Object.freeze({window:12,batch:4,start:64*1024,min:24*1024,max:96*1024,
+  rto:6000,rtoMin:3000,rtoMax:20000,retries:6,stall:60000,adjust:4000,
+  queue:96,peerQueue:16,highWater:64*1024,lowWater:16*1024,wireRate:192*1024});
+ const nowMs=()=>performance.now();
+ const hasBinaryCrypto=()=>!!(globalThis.crypto?.subtle&&globalThis.TextEncoder);
+ const hexBytes=h=>Uint8Array.from(h.match(/../g)||[],x=>parseInt(x,16));
+ const bytesHex=b=>Array.from(b,x=>x.toString(16).padStart(2,'0')).join('');
+ const binTopic=(s,to)=>s.topic+'/files/v2/'+to;
+ const utf8=t=>new TextEncoder().encode(t);
+ function concatBytes(a,b){const out=new Uint8Array(a.length+b.length);out.set(a);out.set(b,a.length);return out;}
+ function fileKey(s,t){
+  if(!t.cryptoKey){
+   const owner=t.own?s.id:t.sender;
+   t.cryptoKey=(async()=>{
+    const base=await crypto.subtle.importKey('raw',utf8(s.key),'PBKDF2',false,['deriveKey']);
+    const salt=concatBytes(hexBytes(t.salt),utf8('|'+s.topic+'|'+owner+'|'+t.transfer));
+    return crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt,iterations:100000},base,
+     {name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+   })();
+  }
+  return t.cryptoKey;
+ }
+ async function prepareBinary(s,t){
+  t.bin=0;
+  if(!hasBinaryCrypto()||t.total>0xffffffff)return;
+  try{t.salt=bytesHex(crypto.getRandomValues(new Uint8Array(16)));await fileKey(s,t);t.bin=2;}
+  catch(_){t.cryptoKey=null;t.salt=null;}
+ }
+ async function binaryFrame(s,t,to,index){
+  const key=await fileKey(s,t),header=new Uint8Array(52);
+  header.set([87,78,84,50]);header.set(hexBytes(s.id),4);header.set(hexBytes(t.transfer),20);
+  new DataView(header.buffer).setUint32(36,index);crypto.getRandomValues(header.subarray(40,52));
+  const plain=t.bytes.subarray(index*CHUNK,Math.min(t.size,(index+1)*CHUNK));
+  const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv:header.subarray(40),
+   additionalData:concatBytes(header,utf8(binTopic(s,to))),tagLength:128},key,plain);
+  return concatBytes(header,new Uint8Array(ciphertext));
+ }
+ async function receiveBinary(s,topic,payload,packet){
+  if(session!==s||packet?.retain||topic!==binTopic(s,s.id))return;
+  const frame=new Uint8Array(payload.buffer,payload.byteOffset||0,payload.byteLength);
+  if(frame.length<68||frame.length>CHUNK+68||frame[0]!==87||frame[1]!==78||frame[2]!==84||frame[3]!==50)return;
+  const sender=bytesHex(frame.subarray(4,20)),transfer=bytesHex(frame.subarray(20,36));
+  const t=fileState(s).items.get(sender+':'+transfer);
+  if(!t||!t.running||!t.steady||t.verifying||t.removed)return;
+  const index=new DataView(frame.buffer,frame.byteOffset,frame.byteLength).getUint32(36);
+  const expected=Math.min(CHUNK,t.size-index*CHUNK);
+  if(index>=t.total||t.parts.has(index)||!t.pending.has(index)||frame.length!==expected+68)return;
+  t.decrypting=t.decrypting||new Set();
+  if(t.decrypting.has(index)||t.decrypting.size>=STEADY.window)return;
+  t.decrypting.add(index);const generation=t.generation;
+  try{
+   const key=await fileKey(s,t),plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:frame.subarray(40,52),
+    additionalData:concatBytes(frame.subarray(0,52),utf8(topic)),tagLength:128},key,frame.subarray(52));
+   if(session!==s||t.removed||!t.running||t.generation!==generation||t.parts.has(index))return;
+   if(plain.byteLength!==expected)return;
+   t.bytes.set(new Uint8Array(plain),index*CHUNK);t.parts.add(index);t.progress.value=t.parts.size;
+   recordFileMeter(t,expected);afterSteadyChunk(s,t,index,expected);
+   fileStatus(t,`\u63a5\u6536\u4e2d ${Math.floor(t.parts.size/t.total*100)}%`);
+   if(t.parts.size===t.total){verifyFile(s,t);return;}
+   requestParts(s,t);
+  }catch(_){t.badFrames=(t.badFrames||0)+1;}finally{t.decrypting.delete(index);}
+ }
+ function beginSteady(s,t){
+  t.steady=!!(t.bin===2&&s.binaryReady&&hasBinaryCrypto()&&!t.forceLegacy);
+  if(!t.steady)return;
+  t.generation=(t.generation||0)+1;t.pending=new Map();t.nextIndex=0;t.rto=STEADY.rto;
+  t.srtt=0;t.rttvar=0;t.rate=STEADY.start;t.rxBytes=0;t.feedbackBytes=0;
+  t.lastProgress=t.feedbackAt=nowMs();t.coolUntil=0;t.lastBackoff=-Infinity;t.slowEpochs=0;
+  t.retries=t.retries||0;t.badFrames=t.badFrames||0;t.requests=t.requests||0;t.binaryReceived=0;t.fallbacks=t.fallbacks||0;
+ }
+ function tuneRate(t){
+  const now=nowMs(),dt=now-t.feedbackAt;if(dt<STEADY.adjust)return;
+  const delivered=(t.rxBytes-t.feedbackBytes)*1000/dt;
+  t.goodput=delivered;t.feedbackAt=now;t.feedbackBytes=t.rxBytes;
+  if(delivered>0&&delivered<t.rate*.72)t.slowEpochs++;else t.slowEpochs=0;
+  if(now<t.coolUntil)return;
+  if(t.slowEpochs>=2){t.rate=Math.max(STEADY.min,t.rate*.85);t.coolUntil=now+8000;t.slowEpochs=0;}
+  else if(delivered>=t.rate*.88&&now-t.lastProgress<1500){t.rate=Math.min(STEADY.max,t.rate+4*1024);}
+ }
+ function afterSteadyChunk(s,t,index,bytes){
+  if(!t.steady)return;
+  const now=nowMs(),p=t.pending.get(index);t.pending.delete(index);
+  if(p&&p.attempt===0){
+   const sample=Math.max(1,now-p.at);
+   if(!t.srtt){t.srtt=sample;t.rttvar=sample/2;}
+   else{t.rttvar=.75*t.rttvar+.25*Math.abs(t.srtt-sample);t.srtt=.875*t.srtt+.125*sample;}
+   t.rto=Math.max(STEADY.rtoMin,Math.min(STEADY.rtoMax,t.srtt+4*t.rttvar+250));
+  }
+  t.lastProgress=now;t.rxBytes+=bytes;t.binaryReceived++;tuneRate(t);
+ }
+ function fallbackLegacy(s,t){
+  filePublish(s,{op:'cancel',transfer:t.transfer,to:t.sender});
+  t.forceLegacy=true;t.steady=false;t.fallbacks++;t.generation++;t.pending.clear();
+  t.rounds=0;t.lastCount=t.parts.size;clearTimeout(t.timer);requestLegacyParts(s,t);
+ }
+ function requestParts(s,t){
+  if(!t.steady){requestLegacyParts(s,t);return;}
+  if(!t.running||session!==s||t.removed||t.verifying)return;
+  if(!connected()){stopReceive(t,'\u4f20\u8f93\u5df2\u6682\u505c \u00b7 \u91cd\u8fde\u540e\u53ef\u7ee7\u7eed\u63a5\u6536');return;}
+  if(t.parts.size===t.total){verifyFile(s,t);return;}
+  const now=nowMs();
+  if(now-t.lastProgress>STEADY.stall){stopReceive(t,'\u63a5\u6536\u8d85\u65f6 \u00b7 \u8bf7\u786e\u8ba4\u5bf9\u65b9\u5728\u7ebf\u540e\u7ee7\u7eed');return;}
+  // A working v1 peer or broker policy must not leave binary negotiation hung.
+  if(!t.binaryReceived&&now-t.lastProgress>12000){fallbackLegacy(s,t);return;}
+  const wanted=[];let expired=false;
+  for(const [index,p] of t.pending){
+   const retryDelay=t.rto*(1+.5*Math.min(p.attempt,2));
+   const laterBlocksArrived=t.parts.size-(p.partsAt||0)>=STEADY.window&&now-p.at>=Math.max(1500,2*t.srtt);
+   if(!laterBlocksArrived&&now-p.at<retryDelay)continue;
+   if(t.decrypting?.has(index))continue;
+   if(p.attempt>=STEADY.retries){stopReceive(t,'\u90e8\u5206\u5185\u5bb9\u672a\u6536\u5230 \u00b7 \u53ef\u7ee7\u7eed\u63a5\u6536');return;}
+   p.at=now;p.partsAt=t.parts.size;p.attempt++;t.retries++;expired=true;wanted.push(index);
+  }
+  // One gentle reduction per recovery period, not one halving per missing chunk.
+  if(expired&&now-t.lastBackoff>=8000){t.rate=Math.max(STEADY.min,t.rate*.85);t.lastBackoff=now;t.coolUntil=now+8000;}
+  let free=STEADY.window-t.pending.size;
+  if(free>=STEADY.batch||t.pending.size===0){
+   while(free>0&&t.nextIndex<t.total){const index=t.nextIndex++;if(t.parts.has(index))continue;
+    t.pending.set(index,{at:now,attempt:0,partsAt:t.parts.size});wanted.push(index);free--;}
+  }
+  for(let k=0;k<wanted.length;k+=STEADY.batch){
+   if(!filePublish(s,{op:'request',transfer:t.transfer,to:t.sender,indices:wanted.slice(k,k+STEADY.batch),bin:2,rate:Math.round(t.rate)})){
+    stopReceive(t,'\u8fde\u63a5\u4e2d\u65ad \u00b7 \u53ef\u7ee7\u7eed\u63a5\u6536');return;
+   }t.requests++;
+  }
+  clearTimeout(t.timer);t.timer=setTimeout(()=>requestParts(s,t),1000);
+ }
+ // A per-session pacing worker avoids tying steady pacing to UI repaint work.
+ // Timers in a frozen browser cannot be guaranteed; the fallback never catches up
+ // by releasing a large burst after a late callback.
+ function pacingSleep(s,ms){
+  ms=Math.max(1,Math.ceil(ms));const f=fileState(s);
+  if(f.pacer===undefined){
+   f.pacer=null;
+   if(typeof Worker!=='undefined')try{
+    const url=URL.createObjectURL(new Blob(['onmessage=e=>setTimeout(()=>postMessage(e.data.id),e.data.ms)'],{type:'text/javascript'}));
+    const worker=new Worker(url);URL.revokeObjectURL(url);const jobs=new Map();
+    worker.onmessage=e=>{const job=jobs.get(e.data);if(job){jobs.delete(e.data);clearTimeout(job.backup);job.resolve();}};
+    worker.onerror=()=>{for(const job of jobs.values()){clearTimeout(job.backup);job.resolve();}jobs.clear();worker.terminate();f.pacer=null;};
+    f.pacer={worker,jobs,seq:0};
+   }catch(_){}
+  }
+  if(!f.pacer)return new Promise(resolve=>setTimeout(resolve,ms));
+  return new Promise(resolve=>{
+   const p=f.pacer,id=++p.seq;
+   const backup=setTimeout(()=>{p.jobs.delete(id);resolve();},Math.max(250,ms+200));
+   p.jobs.set(id,{resolve,backup});p.worker.postMessage({id,ms});
+  });
+ }
+ function closePacer(s){
+  const p=s.files?.pacer;if(!p)return;
+  for(const job of p.jobs.values()){clearTimeout(job.backup);job.resolve();}p.jobs.clear();p.worker.terminate();s.files.pacer=undefined;
+ }
+ function bufferSize(s){return Math.max(s.socket?.bufferedAmount||0,s.client?.stream?.socket?.bufferedAmount||0,s.client?.stream?.writableLength||0);}
+ function peerFlow(f,to){
+  f.peers=f.peers||new Map();
+  let p=f.peers.get(to);if(!p){if(f.peers.size>=64)return null;p={rate:STEADY.start,nextAt:0,lastSeen:nowMs()};f.peers.set(to,p);}
+  p.lastSeen=nowMs();return p;
+ }
+ function cancelQueued(s,t,to){
+  const f=fileState(s);t.cancelEpoch=t.cancelEpoch||new Map();t.cancelEpoch.set(to,(t.cancelEpoch.get(to)||0)+1);
+  f.queue=f.queue.filter(q=>q.t!==t||q.to!==to);
+ }
+ function enqueueFile(s,t,msg){
+  const f=fileState(s);const binary=msg.bin===2&&t.bin===2&&hasBinaryCrypto();
+  const p=peerFlow(f,msg.senderId);if(!p)return;
+  if(binary&&Number.isFinite(msg.rate))p.rate=Math.max(STEADY.min,Math.min(STEADY.max,msg.rate));
+  t.cancelEpoch=t.cancelEpoch||new Map();
+  for(const index of msg.indices){
+   if(!Number.isInteger(index)||index<0||index>=t.total||f.queue.length>=STEADY.queue)continue;
+   if(f.queue.filter(q=>q.to===msg.senderId).length>=STEADY.peerQueue)continue;
+   const key=t.transfer+':'+msg.senderId+':'+index;
+   if(f.activeKey===key||f.queue.some(q=>q.key===key))continue;
+   f.queue.push({t,to:msg.senderId,index,binary,key,cancelEpoch:t.cancelEpoch.get(msg.senderId)||0});
+  }
+  serveQueue(s);
+ }
  async function serveQueue(s){
-  const f=fileState(s);if(f.working)return;f.working=true;
-  try{while(session===s&&connected()&&f.queue.length){
-   const {t,to,index}=f.queue.shift();if(t.removed)continue;
-   const bytes=t.bytes.subarray(index*CHUNK,Math.min(t.size,(index+1)*CHUNK));
-   filePublish(s,{op:'chunk',transfer:t.transfer,to,index,data:CryptoJS.enc.Base64.stringify(CryptoJS.lib.WordArray.create(bytes))});
-   await new Promise(resolve=>setTimeout(resolve,25));
-  }}finally{f.working=false;}
+  const f=fileState(s);if(f.working)return;f.working=true;const epoch=f.epoch||0;let congested=false;
+  try{while(session===s&&connected()&&(f.epoch||0)===epoch&&f.queue.length){
+   const now=nowMs(),buffered=bufferSize(s);
+   if(buffered>STEADY.highWater)congested=true;
+   if(congested&&buffered>STEADY.lowWater){await pacingSleep(s,50);continue;}congested=false;
+   let k=0,best=Infinity;
+   for(let i=0;i<f.queue.length;i++){
+    const q=f.queue[i],p=peerFlow(f,q.to);if(!p)continue;
+    const due=Math.max(p.nextAt,f.wireNext||0);
+    if(due<best){best=due;k=i;}
+   }
+   if(best>now){await pacingSleep(s,Math.min(250,best-now));continue;}
+   const job=f.queue.splice(k,1)[0],{t,to,index}=job;f.activeKey=job.key;
+   if(t.removed||!t.bytes||(t.cancelEpoch.get(to)||0)!==job.cancelEpoch)continue;
+   let payload,topic;
+   if(job.binary){
+    try{payload=await binaryFrame(s,t,to,index);topic=binTopic(s,to);}
+    catch(_){filePublish(s,{op:'use-v1',transfer:t.transfer,to});continue;}
+   }else{
+    const bytes=t.bytes.subarray(index*CHUNK,Math.min(t.size,(index+1)*CHUNK));
+    payload=encrypt({...envelope(s,'attachment'),op:'chunk',transfer:t.transfer,to,index,
+     data:CryptoJS.enc.Base64.stringify(CryptoJS.lib.WordArray.create(bytes))},s.key);topic=s.topic+'/files/v1';
+   }
+   if(session!==s||!connected()||(f.epoch||0)!==epoch||t.removed||(t.cancelEpoch.get(to)||0)!==job.cancelEpoch)continue;
+   const length=typeof payload==='string'?payload.length:payload.byteLength;
+   if(typeof payload!=='string'&&s.bufferType)payload=s.bufferType.from(payload);
+   s.client.publish(topic,payload,{qos:0,retain:false},err=>{if(err&&session===s)interruptFiles(s);});
+   const p=peerFlow(f,to),sent=nowMs();
+   p.nextAt=sent+(job.binary?Math.max(60,Math.min(CHUNK,t.size-index*CHUNK)*1000/p.rate):25);
+   f.wireNext=sent+(job.binary?length*1000/STEADY.wireRate:0);
+   f.dataWireBytes=(f.dataWireBytes||0)+length;f.dataPackets=(f.dataPackets||0)+1;
+   f.activeKey=null;
+  }}catch(_){fileNotice('\u4f20\u8f93\u6682\u505c \u00b7 \u8bf7\u786e\u8ba4\u8fde\u63a5\u540e\u91cd\u8bd5');}
+  finally{f.activeKey=null;f.working=false;if(session===s&&connected()&&f.queue.length&&(f.epoch||0)!==epoch)serveQueue(s);}
  }
  function fileReceive(s,msg){
   if(msg.type!=='attachment'||typeof msg.senderId!=='string'||!/^[a-f0-9]{32}$/.test(msg.senderId)||typeof msg.transfer!=='string'||!/^[a-f0-9]{32}$/.test(msg.transfer)||msg.senderId===s.id)return;
-  const f=fileState(s), key=msg.senderId+':'+msg.transfer;
+  const f=fileState(s),key=msg.senderId+':'+msg.transfer;
   if(msg.op==='offer'){
-   if(f.items.has(key)||f.items.size>=40||typeof msg.name!=='string'||!msg.name||msg.name.length>255||!Number.isSafeInteger(msg.size)||msg.size<0||msg.total!==Math.ceil(msg.size/CHUNK)||typeof msg.hash!=='string'||!/^[a-f0-9]{64}$/.test(msg.hash))return;
-   const t={key,transfer:msg.transfer,sender:msg.senderId,nickname:msg.nickname,name:msg.name,size:msg.size,hash:msg.hash,total:msg.total,own:false,parts:new Set()};f.items.set(key,t);fileCard(s,t);fileStatus(t,'待接收 · 双方需保持在线');t.receive=action(t,'接收原文件',()=>beginReceive(s,t));return;
+   if(typeof msg.name!=='string'||!msg.name||msg.name.length>255||!Number.isSafeInteger(msg.size)||msg.size<0||msg.total!==Math.ceil(msg.size/CHUNK)||typeof msg.hash!=='string'||!/^[a-f0-9]{64}$/.test(msg.hash))return;
+   const binary=msg.bin===2&&typeof msg.salt==='string'&&/^[a-f0-9]{32}$/.test(msg.salt)&&msg.total<=0xffffffff;
+   const existing=f.items.get(key);
+   if(existing){if(!existing.running&&!existing.done&&existing.hash===msg.hash&&existing.size===msg.size&&binary){existing.bin=2;existing.salt=msg.salt;existing.cryptoKey=null;}return;}
+   if(f.items.size>=40)return;
+   const t={key,transfer:msg.transfer,sender:msg.senderId,nickname:msg.nickname,name:msg.name,size:msg.size,hash:msg.hash,total:msg.total,own:false,parts:new Set(),bin:binary?2:0,salt:binary?msg.salt:null};
+   f.items.set(key,t);fileCard(s,t);fileStatus(t,'\u5f85\u63a5\u6536 \u00b7 \u53cc\u65b9\u9700\u4fdd\u6301\u5728\u7ebf');
+   t.receive=action(t,'\u63a5\u6536\u539f\u6587\u4ef6',()=>beginReceive(s,t));
+   t.pause=action(t,'\u6682\u505c',()=>{filePublish(s,{op:'cancel',transfer:t.transfer,to:t.sender});stopReceive(t,'\u5df2\u6682\u505c \u00b7 \u53ef\u7ee7\u7eed\u63a5\u6536');});t.pause.hidden=true;return;
   }
   if(msg.to!==s.id)return;
   if(msg.op==='request'){
-   const t=f.items.get(s.id+':'+msg.transfer);if(!t?.own||!Array.isArray(msg.indices)||msg.indices.length>4)return;
-   for(const index of msg.indices){if(!Number.isInteger(index)||index<0||index>=t.total||f.queue.length>=64)continue;if(!f.queue.some(q=>q.t===t&&q.to===msg.senderId&&q.index===index))f.queue.push({t,to:msg.senderId,index});}
-   serveQueue(s);return;
+   const t=f.items.get(s.id+':'+msg.transfer);
+   if(!t?.own||t.removed||!Array.isArray(msg.indices)||!msg.indices.length||msg.indices.length>4)return;
+   enqueueFile(s,t,msg);return;
   }
+  if(msg.op==='cancel'){const t=f.items.get(s.id+':'+msg.transfer);if(t?.own)cancelQueued(s,t,msg.senderId);return;}
+  if(msg.op==='use-v1'){const t=f.items.get(key);if(t?.running&&t.steady)fallbackLegacy(s,t);return;}
   if(msg.op==='ack'){
-   const t=f.items.get(s.id+':'+msg.transfer);if(t?.own&&msg.hash===t.hash){if(t.acks.size<100)t.acks.add(msg.senderId);fileStatus(t,`${t.acks.size} 人已接收并校验`);}return;
+   const t=f.items.get(s.id+':'+msg.transfer);
+   if(t?.own&&msg.hash===t.hash){if(t.acks.size<100)t.acks.add(msg.senderId);cancelQueued(s,t,msg.senderId);fileStatus(t,`${t.acks.size} \u4eba\u5df2\u63a5\u6536\u5e76\u6821\u9a8c`);}return;
   }
   if(msg.op!=='chunk')return;const t=f.items.get(key);
   if(!t?.running||t.verifying||!Number.isInteger(msg.index)||msg.index<0||msg.index>=t.total||t.parts.has(msg.index)||typeof msg.data!=='string'||msg.data.length>10924||!/^[A-Za-z0-9+/]*={0,2}$/.test(msg.data))return;
   const expected=Math.min(CHUNK,t.size-msg.index*CHUNK);if(msg.data.length!==4*Math.ceil(expected/3))return;
   let binary;try{binary=atob(msg.data);}catch(_){return;}if(binary.length!==expected)return;
-  for(let i=0;i<binary.length;i++)t.bytes[msg.index*CHUNK+i]=binary.charCodeAt(i);t.parts.add(msg.index);t.progress.value=t.parts.size;
-  fileStatus(t,`接收中 ${Math.floor(t.parts.size/t.total*100)}% · 请保持在线`);
+  // A peer which answered in v1 is an explicit, observable compatibility fallback.
+  if(t.steady){filePublish(s,{op:'cancel',transfer:t.transfer,to:t.sender});t.forceLegacy=true;t.steady=false;t.fallbacks++;t.pending.clear();t.rounds=0;t.lastCount=t.parts.size;}
+  for(let i=0;i<binary.length;i++)t.bytes[msg.index*CHUNK+i]=binary.charCodeAt(i);
+  t.parts.add(msg.index);t.progress.value=t.parts.size;recordFileMeter(t,expected);
+  fileStatus(t,`\u63a5\u6536\u4e2d ${Math.floor(t.parts.size/t.total*100)}%`);
   if(t.parts.size===t.total){verifyFile(s,t);return;}
-  // Advance quickly once this batch is complete; duplicates and reordering are harmless.
   if(t.parts.size%4===0){clearTimeout(t.timer);t.timer=setTimeout(()=>requestParts(s,t),50);}
  }
+ // Local, read-only diagnostics: no payloads, room secrets or external telemetry.
+ Object.defineProperty(window,'chatTransferStats',{configurable:true,value:()=>{
+  if(!session?.files)return [];
+  return [...session.files.items.values()].filter(t=>!t.own).map(t=>({
+   mode:t.steady?'mqtt-binary-v2':'mqtt-legacy-v1',receivedChunks:t.parts.size,totalChunks:t.total,
+   pending:t.pending?.size||0,requestedRateKiB:t.steady?t.rate/1024:null,retries:t.retries||0,
+   rejectedFrames:t.badFrames||0,fallbacks:t.fallbacks||0,done:!!t.done,
+   elapsedMs:t.done?(t.wallFinished-t.wallStarted):t.wallStarted?nowMs()-t.wallStarted:0
+  }));
+ }});
  $('previewClose').onclick=()=>$('preview').close();
  $('preview').addEventListener('close',()=>$('previewImage').removeAttribute('src'));
 
